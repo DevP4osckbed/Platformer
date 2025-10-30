@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platformer Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* DOM overlay for logs/errors */
+        #overlay {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            width: 460px;
+            max-height: 50vh;
+            background: rgba(0,0,0,0.75);
+            color: #ddd;
+            border-radius: 6px;
+            padding: 8px;
+            box-sizing: border-box;
+            font-family: monospace;
+            font-size: 12px;
+            overflow: auto;
+            z-index: 9999;
+        }
+        #overlay.hidden { display: none; }
+        #overlay ul { list-style: none; margin: 0; padding: 0; }
+        #overlay li { padding: 2px 4px; white-space: pre-wrap; word-break: break-word; }
+        #overlay li.log  { color: #ddd; }
+        #overlay li.info { color: #9fd; }
+        #overlay li.warn { color: #f8d280; }
+        #overlay li.error{ color: #ff8b8b; }
+        #overlay .hint { color: #999; font-size: 11px; margin-top: 6px; }
+    </style>
+</head>
+<body>
+    <!-- DOM overlay element for logs/errors -->
+    <div id="overlay">
+        <ul id="overlayList"></ul>
+        <div class="hint">Toggle: press "c"</div>
+    </div>
+
+    <script>
+        // DOM-based in-page debugger
+        const _overlayMax = 64;
+        const overlayEl = document.getElementById('overlay');
+        const overlayList = document.getElementById('overlayList');
+
+        function addOverlayDOM(text, type = 'log') {
+            const ts = new Date().toLocaleTimeString();
+            const li = document.createElement('li');
+            li.className = type;
+            li.textContent = `[${ts}] ${text}`;
+            overlayList.appendChild(li);
+            while (overlayList.children.length > _overlayMax) {
+                overlayList.removeChild(overlayList.firstChild);
+            }
+            overlayEl.scrollTop = overlayEl.scrollHeight;
+        }
+
+        // override console to also write to DOM overlay
+        (function hookConsole() {
+            const orig = { log: console.log, error: console.error, warn: console.warn, info: console.info };
+            console.log = (...args) => { addOverlayDOM(args.map(argToString).join(' '), 'log'); orig.log.apply(console, args); };
+            console.info = (...args) => { addOverlayDOM(args.map(argToString).join(' '), 'info'); orig.info.apply(console, args); };
+            console.warn = (...args) => { addOverlayDOM(args.map(argToString).join(' '), 'warn'); orig.warn.apply(console, args); };
+            console.error = (...args) => { addOverlayDOM(args.map(argToString).join(' '), 'error'); orig.error.apply(console, args); };
+
+            function argToString(a) {
+                try { return (typeof a === 'string') ? a : JSON.stringify(a); }
+                catch (e) { return String(a); }
+            }
+        })();
+
+        // capture runtime errors and promise rejections
+        window.onerror = function(message, source, lineno, colno, error) {
+            const src = source ? `${source}:${lineno}:${colno}` : 'unknown';
+            const stack = error && error.stack ? `\n${error.stack}` : '';
+            addOverlayDOM(`ERROR: ${message} (${src})${stack}`, 'error');
+            return false;
+        };
+        window.addEventListener('unhandledrejection', (ev) => {
+            const reason = ev.reason && ev.reason.stack ? ev.reason.stack : String(ev.reason);
+            addOverlayDOM(`UnhandledRejection: ${reason}`, 'error');
+        });
+
+        // Dynamic script loader (returns a Promise)
+        function loadScript(url) {
+            return new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = url;
+                s.async = true;
+                s.onload = () => resolve(url);
+                s.onerror = () => reject(new Error('Failed to load ' + url));
+                document.head.appendChild(s);
+            });
+        }
+
+        // Check if p5.play appears to be attached (either as instance methods or global helpers)
+        function hasP5Play() {
+            return typeof window.p5 === 'function' &&
+                (typeof window.p5.prototype.createSprite === 'function' || typeof window.createSprite === 'function');
+        }
+
+        // The actual p5 sketch in instance mode (moved from global setup/draw)
+        function sketch(p) {
+            let player;
+            let platforms;
+            const GRAVITY = 0.6;
+            const H_SPEED = 5;
+            const JUMP_FORCE = -12;
+            let _gameInitialized = false;
+
+            p.setup = function() {
+                p.createCanvas(p.windowWidth, p.windowHeight * 0.9);
+
+                // player sprite
+                player = p.createSprite(100, 100, 40, 40);
+                player.shapeColor = p.color(255);
+                player.setCollider("rectangle", 0, 0, 40, 40);
+
+                // group of immovable platforms (flat terrain + ledges)
+                platforms = new p.Group();
+
+                // flat ground across the bottom
+                let ground = p.createSprite(p.width / 2, p.height - 20, p.width, 40);
+                ground.immovable = true;
+                ground.shapeColor = p.color(100, 255, 100);
+                platforms.add(ground);
+
+                // sample ledges
+                let ledge1 = p.createSprite(300, p.height - 140, 200, 20);
+                ledge1.immovable = true;
+                ledge1.shapeColor = p.color(100, 255, 100);
+                platforms.add(ledge1);
+
+                let ledge2 = p.createSprite(100, p.height - 240, 200, 20);
+                ledge2.immovable = true;
+                ledge2.shapeColor = p.color(100, 255, 100);
+                platforms.add(ledge2);
+
+                console.log("Setup complete (instance mode)");
+                _gameInitialized = true;
+            };
+
+            p.windowResized = function() {
+                p.resizeCanvas(p.windowWidth, p.windowHeight * 0.9);
+                if (platforms && platforms.length > 0) {
+                    let ground = platforms[0];
+                    ground.position.x = p.width / 2;
+                    ground.position.y = p.height - 20;
+                    ground.width = p.width;
+                }
+            };
+
+            function resolvePlatformCollision(spr, platform) {
+                if (spr.velocity.y >= 0 && (spr.position.y < platform.position.y)) {
+                    spr.position.y = platform.position.y - platform.height / 2 - spr.height / 2;
+                    spr.velocity.y = 0;
+                }
+            }
+
+            p.draw = function() {
+                p.background(51);
+
+                if (player) {
+                    if (p.keyIsDown(p.LEFT_ARROW) || p.keyIsDown(65)) { // 65 = 'A'
+                        player.velocity.x = -H_SPEED;
+                    } else if (p.keyIsDown(p.RIGHT_ARROW) || p.keyIsDown(68)) { // 68 = 'D'
+                        player.velocity.x = H_SPEED;
+                    } else {
+                        player.velocity.x *= 0.8;
+                        if (Math.abs(player.velocity.x) < 0.1) player.velocity.x = 0;
+                    }
+
+                    player.velocity.y += GRAVITY;
+                    if (platforms) player.collide(platforms, resolvePlatformCollision);
+                    player.position.x = p.constrain(player.position.x, player.width / 2, p.width - player.width / 2);
+                }
+
+                // Optionally draw sprites:
+                // p.drawSprites();
+            };
+
+            p.keyPressed = function() {
+                // toggle overlay with 'c' or 'C'
+                if ((p.key === 'c' || p.key === 'C')) {
+                    overlayEl.classList.toggle('hidden');
+                    addOverlayDOM(`Overlay ${overlayEl.classList.contains('hidden') ? 'hidden' : 'shown'}`, 'info');
+                    return false;
+                }
+
+                // jump only if standing on something
+                if (player && (p.keyCode === p.UP_ARROW || p.key === 'w' || p.key === 'W') && Math.abs(player.velocity.y) < 1) {
+                    player.velocity.y = JUMP_FORCE;
+                }
+            };
+        }
+
+        // Try to load p5.play from multiple sources, then start the p5 instance
+        (async function ensureP5PlayAndStart() {
+            const candidates = [
+                'https://cdn.jsdelivr.net/npm/p5play@3.8.14/p5play.js'
+            ];
+
+            if (hasP5Play()) {
+                addOverlayDOM('p5.play already present; starting game', 'info');
+                new p5(sketch);
+                return;
+            }
+
+            for (const url of candidates) {
+                try {
+                    addOverlayDOM(`Attempting to load p5.play from ${url}`, 'info');
+                    await loadScript(url);
+                    // small pause to let p5.play attach to p5 prototype
+                    await new Promise(r => setTimeout(r, 80));
+
+                    if (hasP5Play()) {
+                        addOverlayDOM('p5.play loaded and detected; creating p5 instance', 'info');
+                        new p5(sketch);
+                        return;
+                    } else {
+                        addOverlayDOM(`Loaded ${url} but p5.play API not detected yet`, 'warn');
+                    }
+                } catch (err) {
+                    addOverlayDOM(`Failed to load ${url}: ${err}`, 'warn');
+                }
+            }
+
+            addOverlayDOM('Unable to load p5.play from known CDNs; game will not start', 'error');
+        })();
+    </script>
+</body>
+</html>
